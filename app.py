@@ -700,11 +700,17 @@ def render_results(election: dict, show_audit: bool = False) -> None:
 
 
 def render_thank_you(election: dict) -> None:
-    st.markdown('<div class="hero"><div class="eyebrow">Ballot submitted</div><h1>Thank you for voting.</h1></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="hero"><div class="eyebrow">Ballot submitted</div><h1>Thank you for voting.</h1></div>',
+        unsafe_allow_html=True,
+    )
     if election.get("results_visible"):
         render_results(election)
     else:
-        st.markdown('<div class="callout">Results will be shared by the administrator shortly.</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="callout">Results coming up here once everyone has voted!</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def render_voter(token: str) -> None:
