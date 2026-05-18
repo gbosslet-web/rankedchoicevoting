@@ -378,43 +378,48 @@ def fetch_results(election_id: str, seats_available: int) -> dict:
     return tabulate_stv(rankings, candidate_map, seats_available)
 
 
-def standing_ties(results: dict) -> list[dict]:
+def seat_boundary_ties(results: dict, seats_available: int) -> list[dict]:
     standings = result_standings(results)
-    grouped: dict[tuple[str, float], list[str]] = {}
-    for row in standings:
-        if row["status"] == "eliminated":
-            continue
-        votes = row.get("votes")
-        if votes is None:
-            continue
-        grouped.setdefault((row["status"], float(votes)), []).append(row["candidate"])
+    seats = int(seats_available)
+    if seats < 1 or len(standings) <= seats:
+        return []
 
-    ties = []
-    for (status, votes), names in grouped.items():
-        if len(names) > 1:
-            ties.append(
-                {
-                    "round": "Current",
-                    "type": f"{status.title()} standing tie",
-                    "candidates": sorted(names, key=str.lower),
-                    "resolution": f"Current displayed order breaks the {votes:g}-vote tie alphabetically.",
-                }
-            )
-    return ties
+    cutoff = standings[seats - 1]
+    next_candidate = standings[seats]
+    cutoff_votes = cutoff.get("votes")
+    next_votes = next_candidate.get("votes")
+    if cutoff_votes is None or next_votes is None:
+        return []
+
+    if abs(float(cutoff_votes) - float(next_votes)) > 1e-9:
+        return []
+
+    tied_names = [
+        row["candidate"]
+        for row in standings
+        if row.get("votes") is not None and abs(float(row["votes"]) - float(cutoff_votes)) <= 1e-9
+    ]
+    return [
+        {
+            "round": "Current",
+            "type": f"Tie at final elected position ({seats})",
+            "candidates": sorted(tied_names, key=str.lower),
+            "resolution": (
+                f"The current cutoff between rank {seats} and rank {seats + 1} is tied at "
+                f"{float(cutoff_votes):g} votes. Review your tie-breaking rule before certifying."
+            ),
+        }
+    ]
 
 
-def all_tie_events(results: dict) -> list[dict]:
-    return list(results.get("tie_events", [])) + standing_ties(results)
-
-
-def render_tie_warnings(results: dict) -> None:
-    ties = all_tie_events(results)
+def render_tie_warnings(results: dict, seats_available: int) -> None:
+    ties = seat_boundary_ties(results, seats_available)
     if not ties:
-        st.success("No exact vote ties detected in the current tabulation.")
+        st.success("No tie detected at the final elected position.")
         return
 
     st.warning(
-        "Tie detected. The app used deterministic alphabetical tie-breaking, but you should confirm this matches your bylaws before certifying results."
+        "Tie detected at the final elected position. Pause before certifying results and apply your board's tie-breaking rule."
     )
     st.dataframe(
         pd.DataFrame(
@@ -453,12 +458,12 @@ def protocol_audit(election: dict, results: dict) -> pd.DataFrame:
 
     voted_count = sum(1 for voter in voters if voter.get("has_voted"))
     winner_ids = [winner["candidate_id"] for winner in results.get("winners", [])]
-    ties = all_tie_events(results)
-    tie_note = "No exact ties detected in the current tabulation."
+    ties = seat_boundary_ties(results, int(election["seats_available"]))
+    tie_note = "No tie detected at the final elected position."
     tie_status = "Pass"
     if ties:
         tie_status = "Review"
-        tie_note = f"{len(ties)} exact tie event(s) detected. Review the tie warning table before certifying."
+        tie_note = "Tie detected at the final elected position. Apply your board's tie-breaking rule before certifying."
     if len(candidates) <= int(election["seats_available"]):
         tie_note = "Not applicable unless more candidates are added than available seats."
         tie_status = "Pass"
@@ -608,7 +613,7 @@ def render_results(election: dict) -> None:
     metric_cols[1].metric("Seats", election["seats_available"])
     metric_cols[2].metric("Droop Quota", results["quota"])
 
-    render_tie_warnings(results)
+    render_tie_warnings(results, election["seats_available"])
     render_results_summary(results, election["seats_available"])
 
     rows = []
@@ -656,7 +661,7 @@ def render_results(election: dict) -> None:
     with st.expander("Protocol audit", expanded=False):
         st.dataframe(protocol_audit(election, results), hide_index=True, use_container_width=True)
         st.caption(
-            "When exact ties occur, the app displays them and uses deterministic alphabetical tie-breaking unless your bylaws require a different process."
+            "Tie protocol is only flagged when a tie affects the final elected position, such as rank 5 vs rank 6 for five seats."
         )
 
 
