@@ -231,17 +231,19 @@ def parse_candidates(raw: str) -> list[dict[str, str]]:
     return candidates
 
 
-def parse_emails(raw: str) -> list[str]:
-    emails = []
+def parse_voter_labels(raw: str) -> list[str]:
+    labels = []
     seen = set()
-    for item in re.split(r"[\s,;]+", raw):
-        email = item.strip().lower()
-        if not email or email in seen:
+    for line in raw.splitlines():
+        label = re.sub(r"\s+", " ", line.strip())
+        if not label:
             continue
-        if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
-            emails.append(email)
-            seen.add(email)
-    return emails
+        dedupe_key = label.lower()
+        if dedupe_key in seen:
+            continue
+        labels.append(label)
+        seen.add(dedupe_key)
+    return labels
 
 
 def candidate_sortable_styles() -> str:
@@ -641,7 +643,7 @@ def render_voter(token: str) -> None:
 
 def render_link_table(voters: list[dict]) -> None:
     if not voters:
-        st.info("No voters have been added yet.")
+        st.info("No voter links have been generated yet.")
         return
 
     rows = []
@@ -650,12 +652,30 @@ def render_link_table(voters: list[dict]) -> None:
         link = f"{app_base_url()}/?token={quote(token)}"
         rows.append(
             {
-                "Email": voter["email"],
+                "Name": voter["email"],
                 "Voting Link": link,
                 "Voted": "Yes" if voter["has_voted"] else "No",
             }
         )
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+    markdown_links = "\n".join(f"- [{row['Name']}]({row['Voting Link']})" for row in rows)
+    html_links = "\n".join(f'<p><a href="{row["Voting Link"]}">{row["Name"]}</a></p>' for row in rows)
+
+    st.markdown("##### Google Docs link list")
+    st.caption("Copy the Markdown list below into a Google Doc. Each name points to that person’s unique voting link.")
+    st.text_area(
+        "Copy/paste hyperlink list",
+        markdown_links,
+        height=min(320, max(140, 28 * len(rows))),
+        label_visibility="collapsed",
+    )
+    st.download_button(
+        "Download Google Docs links as HTML",
+        html_links,
+        file_name="voting_links.html",
+        mime="text/html",
+    )
     st.download_button(
         "Download voter links CSV",
         pd.DataFrame(rows).to_csv(index=False),
@@ -790,22 +810,23 @@ def render_admin() -> None:
         with st.expander("Add voters", expanded=not voters):
             with st.form("add_voters"):
                 voter_raw = st.text_area(
-                    "Paste voter emails",
-                    placeholder="alex@example.com\nsam@example.com\njordan@example.com",
+                    "Paste voter names",
+                    placeholder="Alex Johnson\nSam Rivera\nJordan Lee",
                     height=140,
+                    help="Enter one person per line. The app will generate one private voting link per name.",
                 )
                 submitted = st.form_submit_button("Generate Voting Links")
             if submitted:
-                emails = parse_emails(voter_raw)
-                if not emails:
-                    st.warning("No valid email addresses were found.")
+                voter_labels = parse_voter_labels(voter_raw)
+                if not voter_labels:
+                    st.warning("Add at least one voter name.")
                 else:
                     try:
-                        db.add_voters(election_id, emails)
-                        st.success(f"Generated {len(emails)} voting links.")
+                        db.add_voters(election_id, voter_labels)
+                        st.success(f"Generated {len(voter_labels)} voting links.")
                         st.rerun()
                     except Exception:
-                        st.error("Could not add voters. Check for duplicate rows or database constraints.")
+                        st.error("Could not add voter links. Check your database connection and try again.")
 
         st.subheader("Voter Links")
         render_link_table(voters)

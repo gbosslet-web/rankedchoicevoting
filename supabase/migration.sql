@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS candidates (
 CREATE TABLE IF NOT EXISTS voters (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     election_id UUID REFERENCES elections(id) ON DELETE CASCADE,
+    -- Stores either an email address or a voter display name/label.
     email TEXT NOT NULL,
     token UUID UNIQUE DEFAULT gen_random_uuid(),
     has_voted BOOLEAN DEFAULT FALSE

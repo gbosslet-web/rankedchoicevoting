@@ -1,6 +1,6 @@
 # Streamlit Ranked-Choice Voting App
 
-A polished Streamlit ranked-choice voting system for board elections. It supports single-use voter links, multi-seat STV tabulation, admin election management, voter link generation, and live results publishing.
+A polished Streamlit ranked-choice voting system for board elections. It supports single-use voter links, multi-seat STV tabulation, admin election management, voter link generation, Google-Docs-friendly hyperlink lists, and live results publishing.
 
 By default, the app runs locally with SQLite, so you do not need a Supabase account to test it.
 
@@ -26,7 +26,7 @@ For local development, the admin password is:
 admin
 ```
 
-Generated voter links use `/?token=UUID`.
+Generated voter links use `/?token=UUID`. In the admin console, paste one voter name per line to generate a unique link for each person, then copy the Markdown link list into a Google Doc.
 
 Local elections and ballots are stored in `.data/rcv.sqlite`.
 
