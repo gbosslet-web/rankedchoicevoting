@@ -186,12 +186,17 @@ def candidate_sortable_styles() -> str:
         padding: 2px;
     }
     .sortable-container {
-        border: 0;
-        background: transparent;
-        padding: 0;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: #f9fafb;
+        padding: 12px;
+        margin-bottom: 14px;
     }
     .sortable-container-header {
-        display: none;
+        color: #111827;
+        font-size: 15px;
+        font-weight: 800;
+        margin-bottom: 10px;
     }
     .sortable-container-body {
         display: flex;
@@ -403,21 +408,24 @@ def render_voter(token: str) -> None:
 
     if sort_items is not None:
         st.markdown("#### Drag candidates into your preferred order")
-        st.caption("Top placard is your first choice. Drag a placard up or down to change the ranking.")
-        sorted_labels = sort_items(
-            labels,
+        st.caption(
+            "Top placard in Ranked choices is your first choice. Drag candidates you do not want to rank into Not ranked."
+        )
+        sorted_groups = sort_items(
+            [
+                {"header": "Ranked choices", "items": labels},
+                {"header": "Not ranked", "items": []},
+            ],
+            multi_containers=True,
             direction="vertical",
             custom_style=candidate_sortable_styles(),
             key=f"candidate-sort-{election['id']}-{voter['id']}",
         )
-        ranked_count = st.slider(
-            "How many choices should be counted?",
-            min_value=1,
-            max_value=len(sorted_labels),
-            value=len(sorted_labels),
-            help="Leave this at all candidates unless you only want to rank your top few choices.",
-        )
-        selected = sorted_labels[:ranked_count]
+        grouped_items = {group["header"]: group["items"] for group in sorted_groups}
+        selected = grouped_items.get("Ranked choices", [])
+        unranked = grouped_items.get("Not ranked", [])
+        if unranked:
+            st.caption(f"Not ranked: {', '.join(unranked)}")
     else:
         st.warning("Drag-and-drop ranking is not available, so this ballot is using the fallback ranking controls.")
         available_names = list(label_to_id.keys())
