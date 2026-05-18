@@ -378,6 +378,61 @@ def fetch_results(election_id: str, seats_available: int) -> dict:
     return tabulate_stv(rankings, candidate_map, seats_available)
 
 
+def standing_ties(results: dict) -> list[dict]:
+    standings = result_standings(results)
+    grouped: dict[tuple[str, float], list[str]] = {}
+    for row in standings:
+        if row["status"] == "eliminated":
+            continue
+        votes = row.get("votes")
+        if votes is None:
+            continue
+        grouped.setdefault((row["status"], float(votes)), []).append(row["candidate"])
+
+    ties = []
+    for (status, votes), names in grouped.items():
+        if len(names) > 1:
+            ties.append(
+                {
+                    "round": "Current",
+                    "type": f"{status.title()} standing tie",
+                    "candidates": sorted(names, key=str.lower),
+                    "resolution": f"Current displayed order breaks the {votes:g}-vote tie alphabetically.",
+                }
+            )
+    return ties
+
+
+def all_tie_events(results: dict) -> list[dict]:
+    return list(results.get("tie_events", [])) + standing_ties(results)
+
+
+def render_tie_warnings(results: dict) -> None:
+    ties = all_tie_events(results)
+    if not ties:
+        st.success("No exact vote ties detected in the current tabulation.")
+        return
+
+    st.warning(
+        "Tie detected. The app used deterministic alphabetical tie-breaking, but you should confirm this matches your bylaws before certifying results."
+    )
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "Round": tie["round"],
+                    "Tie type": tie["type"],
+                    "Candidates": ", ".join(tie["candidates"]),
+                    "App resolution": tie["resolution"],
+                }
+                for tie in ties
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
 def protocol_audit(election: dict, results: dict) -> pd.DataFrame:
     candidates = db.fetch_candidates(election["id"])
     voters = db.fetch_voters(election["id"])
@@ -398,9 +453,15 @@ def protocol_audit(election: dict, results: dict) -> pd.DataFrame:
 
     voted_count = sum(1 for voter in voters if voter.get("has_voted"))
     winner_ids = [winner["candidate_id"] for winner in results.get("winners", [])]
-    tie_note = "Alphabetical by candidate name when exact vote ties occur."
+    ties = all_tie_events(results)
+    tie_note = "No exact ties detected in the current tabulation."
+    tie_status = "Pass"
+    if ties:
+        tie_status = "Review"
+        tie_note = f"{len(ties)} exact tie event(s) detected. Review the tie warning table before certifying."
     if len(candidates) <= int(election["seats_available"]):
         tie_note = "Not applicable unless more candidates are added than available seats."
+        tie_status = "Pass"
 
     checks = [
         {
@@ -435,7 +496,7 @@ def protocol_audit(election: dict, results: dict) -> pd.DataFrame:
         },
         {
             "Check": "Tie protocol",
-            "Status": "Review",
+            "Status": tie_status,
             "Detail": tie_note,
         },
     ]
@@ -547,6 +608,7 @@ def render_results(election: dict) -> None:
     metric_cols[1].metric("Seats", election["seats_available"])
     metric_cols[2].metric("Droop Quota", results["quota"])
 
+    render_tie_warnings(results)
     render_results_summary(results, election["seats_available"])
 
     rows = []
@@ -594,8 +656,7 @@ def render_results(election: dict) -> None:
     with st.expander("Protocol audit", expanded=False):
         st.dataframe(protocol_audit(election, results), hide_index=True, use_container_width=True)
         st.caption(
-            "Tie protocol is marked Review because bylaws sometimes require a specific tie-breaking method. "
-            "The app currently uses a deterministic alphabetical tie-breaker for exact ties."
+            "When exact ties occur, the app displays them and uses deterministic alphabetical tie-breaking unless your bylaws require a different process."
         )
 
 

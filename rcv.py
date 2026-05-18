@@ -112,6 +112,7 @@ def tabulate_stv(
     elected: list[str] = []
     eliminated: list[str] = []
     rounds: list[dict[str, Any]] = []
+    tie_events: list[dict[str, Any]] = []
     round_number = 1
 
     if not candidate_ids:
@@ -120,6 +121,7 @@ def tabulate_stv(
             "total_ballots": total_ballots,
             "winners": [],
             "rounds": [],
+            "tie_events": [],
         }
 
     while active and len(elected) < seats:
@@ -153,6 +155,22 @@ def tabulate_stv(
         )
 
         if newly_elected:
+            tied_elected = [
+                candidate_id
+                for candidate_id in newly_elected
+                if abs(totals[candidate_id] - totals[newly_elected[0]]) <= EPSILON
+            ]
+            if len(tied_elected) > 1:
+                tied_names = [_candidate_name(candidate_id, candidates) for candidate_id in tied_elected]
+                tie_events.append(
+                    {
+                        "round": round_number,
+                        "type": "Election order tie",
+                        "candidates": tied_names,
+                        "resolution": "Alphabetical candidate-name order used for processing order.",
+                    }
+                )
+
             candidate_id = newly_elected[0]
             total_votes = totals.get(candidate_id, 0.0)
             elected.append(candidate_id)
@@ -181,7 +199,24 @@ def tabulate_stv(
             round_number += 1
             continue
 
-        lowest_candidate = min(totals, key=lambda cid: (totals[cid], candidates[cid].lower()))
+        lowest_vote_total = min(totals.values())
+        tied_lowest = [
+            candidate_id
+            for candidate_id, votes in totals.items()
+            if abs(votes - lowest_vote_total) <= EPSILON
+        ]
+        if len(tied_lowest) > 1:
+            tied_names = [_candidate_name(candidate_id, candidates) for candidate_id in tied_lowest]
+            tie_events.append(
+                {
+                    "round": round_number,
+                    "type": "Elimination tie",
+                    "candidates": sorted(tied_names, key=str.lower),
+                    "resolution": "Alphabetical candidate-name order used; first candidate alphabetically eliminated.",
+                }
+            )
+
+        lowest_candidate = min(tied_lowest, key=lambda cid: candidates[cid].lower())
         active.discard(lowest_candidate)
         eliminated.append(lowest_candidate)
         rounds.append(
@@ -207,4 +242,5 @@ def tabulate_stv(
         "total_ballots": total_ballots,
         "winners": winners,
         "rounds": rounds,
+        "tie_events": tie_events,
     }
