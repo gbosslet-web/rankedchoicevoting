@@ -182,35 +182,21 @@ def parse_emails(raw: str) -> list[str]:
 def candidate_sortable_styles() -> str:
     return """
     .sortable-component.vertical {
-        display: grid;
-        grid-template-columns: minmax(0, 1.35fr) minmax(260px, .9fr);
-        gap: 12px;
+        gap: 10px;
         padding: 2px;
     }
-    @media (max-width: 760px) {
-        .sortable-component.vertical {
-            grid-template-columns: 1fr;
-        }
-    }
     .sortable-container {
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        background: #f9fafb;
-        padding: 12px;
-        margin-bottom: 14px;
-        min-height: 160px;
+        border: 0;
+        background: transparent;
+        padding: 0;
     }
     .sortable-container-header {
-        color: #111827;
-        font-size: 15px;
-        font-weight: 800;
-        margin-bottom: 10px;
+        display: none;
     }
     .sortable-container-body {
         display: flex;
         flex-direction: column;
         gap: 10px;
-        min-height: 96px;
     }
     .sortable-item {
         position: relative;
@@ -251,8 +237,8 @@ def render_unranked_helper() -> None:
     st.markdown(
         """
         <div class="callout">
-            <strong>Leaving someone unranked:</strong> drag their placard into the <strong>Not ranked</strong>
-            box, or use the checkboxes below.
+            <strong>Leaving someone unranked:</strong> check their name below. They will be removed from
+            the submitted ballot. Drag the remaining placards to set your ranking.
         </div>
         """,
         unsafe_allow_html=True,
@@ -429,33 +415,32 @@ def render_voter(token: str) -> None:
 
     if sort_items is not None:
         st.markdown("#### Drag candidates into your preferred order")
-        st.caption(
-            "Top placard in Ranked choices is your first choice. Drag candidates you do not want to rank into Not ranked."
-        )
+        st.caption("Top placard is your first choice.")
         render_unranked_helper()
-        sorted_groups = sort_items(
-            [
-                {"header": "Ranked choices", "items": labels},
-                {"header": "Not ranked", "items": []},
-            ],
-            multi_containers=True,
-            direction="vertical",
-            custom_style=candidate_sortable_styles(),
-            key=f"candidate-sort-{election['id']}-{voter['id']}",
-        )
-        grouped_items = {group["header"]: group["items"] for group in sorted_groups}
-        selected = grouped_items.get("Ranked choices", [])
-        unranked = grouped_items.get("Not ranked", [])
-        checkbox_unranked = st.multiselect(
-            "Optional: also leave these candidates unranked",
-            options=selected,
-            help="Use this if the Not ranked drag box is hard to use on your screen.",
-        )
-        if checkbox_unranked:
-            selected = [label for label in selected if label not in checkbox_unranked]
-            unranked = unranked + [label for label in checkbox_unranked if label not in unranked]
-        if unranked:
-            st.caption(f"Not ranked: {', '.join(unranked)}")
+
+        st.markdown("##### Do not rank")
+        excluded = []
+        checkbox_columns = st.columns(2)
+        for index, label in enumerate(labels):
+            with checkbox_columns[index % 2]:
+                if st.checkbox(label, key=f"exclude-{election['id']}-{voter['id']}-{label}"):
+                    excluded.append(label)
+
+        ranked_labels = [label for label in labels if label not in excluded]
+        if excluded:
+            st.caption(f"Not ranked: {', '.join(excluded)}")
+
+        if not ranked_labels:
+            st.warning("Please leave at least one candidate ranked before submitting.")
+            selected = []
+        else:
+            st.markdown("##### Ranked choices")
+            selected = sort_items(
+                ranked_labels,
+                direction="vertical",
+                custom_style=candidate_sortable_styles(),
+                key=f"candidate-sort-{election['id']}-{voter['id']}-{'-'.join(ranked_labels)}",
+            )
     else:
         st.warning("Drag-and-drop ranking is not available, so this ballot is using the fallback ranking controls.")
         available_names = list(label_to_id.keys())
