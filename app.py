@@ -657,6 +657,25 @@ def render_results(election: dict) -> None:
             for round_data in results["rounds"]:
                 st.markdown(f"**Round {round_data['round']}** · {round_data['action']}")
                 st.dataframe(pd.DataFrame(round_data["totals"]), hide_index=True, use_container_width=True)
+                transfers = round_data.get("transfers", [])
+                if transfers:
+                    st.markdown("Transferred vote value")
+                    st.dataframe(
+                        pd.DataFrame(
+                            [
+                                {
+                                    "From": row["source"],
+                                    "To": row["destination"],
+                                    "Transferred value": row["transferred_value"],
+                                }
+                                for row in transfers
+                            ]
+                        ),
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+                elif "eliminated and ballots transferred" in round_data["action"] or "Surplus transfer value" in round_data["action"]:
+                    st.caption("No transferable vote value moved this round; ballots were exhausted or surplus was zero.")
 
     with st.expander("Protocol audit", expanded=False):
         st.dataframe(protocol_audit(election, results), hide_index=True, use_container_width=True)

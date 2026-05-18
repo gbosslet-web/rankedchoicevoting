@@ -40,6 +40,51 @@ def _tally(ballots: list[WeightedBallot], active: set[str]) -> tuple[dict[str, f
     return totals, assignments
 
 
+def _transfer_summary(
+    ballots: list[WeightedBallot],
+    ballot_indices: list[int],
+    active: set[str],
+    candidates: dict[str, str],
+    source_candidate_id: str,
+) -> list[dict[str, Any]]:
+    transfers: dict[str, float] = {}
+    exhausted = 0.0
+
+    for ballot_index in ballot_indices:
+        ballot = ballots[ballot_index]
+        destination = _next_active_preference(ballot, active)
+        if destination is None:
+            exhausted += ballot.weight
+        else:
+            transfers[destination] = transfers.get(destination, 0.0) + ballot.weight
+
+    rows = [
+        {
+            "source_candidate_id": source_candidate_id,
+            "source": _candidate_name(source_candidate_id, candidates),
+            "destination_candidate_id": candidate_id,
+            "destination": _candidate_name(candidate_id, candidates),
+            "transferred_value": round(value, 4),
+        }
+        for candidate_id, value in sorted(
+            transfers.items(),
+            key=lambda item: (-item[1], _candidate_name(item[0], candidates).lower()),
+        )
+        if value > EPSILON
+    ]
+    if exhausted > EPSILON:
+        rows.append(
+            {
+                "source_candidate_id": source_candidate_id,
+                "source": _candidate_name(source_candidate_id, candidates),
+                "destination_candidate_id": None,
+                "destination": "Exhausted (no remaining ranked active candidate)",
+                "transferred_value": round(exhausted, 4),
+            }
+        )
+    return rows
+
+
 def _round_snapshot(
     round_number: int,
     totals: dict[str, float],
@@ -48,6 +93,7 @@ def _round_snapshot(
     elected: list[str],
     eliminated: list[str],
     continuing: set[str],
+    transfers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     ordered_totals = sorted(
         [
@@ -82,6 +128,7 @@ def _round_snapshot(
             {"candidate_id": candidate_id, "candidate": _candidate_name(candidate_id, candidates)}
             for candidate_id in eliminated
         ],
+        "transfers": transfers or [],
     }
 
 
@@ -180,6 +227,13 @@ def tabulate_stv(
             transfer_value = surplus / total_votes if total_votes > EPSILON else 0.0
             for ballot_index in assignments.get(candidate_id, []):
                 ballots[ballot_index].weight *= transfer_value
+            transfers = _transfer_summary(
+                ballots,
+                assignments.get(candidate_id, []),
+                active,
+                candidates,
+                candidate_id,
+            )
 
             action = (
                 f"{_candidate_name(candidate_id, candidates)} elected with "
@@ -194,6 +248,7 @@ def tabulate_stv(
                     deepcopy(elected),
                     deepcopy(eliminated),
                     set(active),
+                    transfers,
                 )
             )
             round_number += 1
@@ -219,6 +274,13 @@ def tabulate_stv(
         lowest_candidate = min(tied_lowest, key=lambda cid: candidates[cid].lower())
         active.discard(lowest_candidate)
         eliminated.append(lowest_candidate)
+        transfers = _transfer_summary(
+            ballots,
+            assignments.get(lowest_candidate, []),
+            active,
+            candidates,
+            lowest_candidate,
+        )
         rounds.append(
             _round_snapshot(
                 round_number,
@@ -228,6 +290,7 @@ def tabulate_stv(
                 deepcopy(elected),
                 deepcopy(eliminated),
                 set(active),
+                transfers,
             )
         )
         round_number += 1
