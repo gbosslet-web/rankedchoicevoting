@@ -604,7 +604,17 @@ def render_results_summary(results: dict, seats_available: int) -> None:
         )
 
 
-def render_results(election: dict) -> None:
+def render_protocol_audit(election: dict, results: dict | None = None) -> None:
+    if results is None:
+        results = fetch_results(election["id"], election["seats_available"])
+    st.subheader("Protocol Audit")
+    st.dataframe(protocol_audit(election, results), hide_index=True, use_container_width=True)
+    st.caption(
+        "Tie protocol is only flagged when a tie affects the final elected position, such as rank 5 vs rank 6 for five seats."
+    )
+
+
+def render_results(election: dict, show_audit: bool = False) -> None:
     results = fetch_results(election["id"], election["seats_available"])
     st.subheader("Live RCV Results")
 
@@ -677,11 +687,9 @@ def render_results(election: dict) -> None:
                 elif "eliminated and ballots transferred" in round_data["action"] or "Surplus transfer value" in round_data["action"]:
                     st.caption("No transferable vote value moved this round; ballots were exhausted or surplus was zero.")
 
-    with st.expander("Protocol audit", expanded=False):
-        st.dataframe(protocol_audit(election, results), hide_index=True, use_container_width=True)
-        st.caption(
-            "Tie protocol is only flagged when a tie affects the final elected position, such as rank 5 vs rank 6 for five seats."
-        )
+    if show_audit:
+        st.divider()
+        render_protocol_audit(election, results)
 
 
 def render_thank_you(election: dict) -> None:
@@ -966,44 +974,49 @@ def render_admin() -> None:
             db.update_election_status(election_id, new_status)
             st.rerun()
 
-        auto_refresh = st.toggle(
-            "Auto-refresh results every 10 seconds",
-            value=True,
-            help="Leave this on during the Zoom vote so the admin dashboard updates as ballots come in.",
-        )
-        if auto_refresh:
-            if st_autorefresh is not None:
-                st_autorefresh(interval=10_000, key=f"admin-refresh-{election_id}")
-                st.caption("Auto-refresh is on. Ballots and results update about every 10 seconds.")
-            else:
-                st.caption("Auto-refresh will turn on after Streamlit installs the latest requirements. Until then, refresh the page.")
+        links_tab, results_tab, audit_tab = st.tabs(["Voting Links", "Live Results", "Protocol Audit"])
 
-        with st.expander("Add voters", expanded=not voters):
-            with st.form("add_voters"):
-                voter_raw = st.text_area(
-                    "Paste voter names",
-                    placeholder="Alex Johnson\nSam Rivera\nJordan Lee",
-                    height=140,
-                    help="Enter one person per line. The app will generate one private voting link per name.",
-                )
-                submitted = st.form_submit_button("Generate Voting Links")
-            if submitted:
-                voter_labels = parse_voter_labels(voter_raw)
-                if not voter_labels:
-                    st.warning("Add at least one voter name.")
+        with links_tab:
+            with st.expander("Add voters", expanded=not voters):
+                with st.form("add_voters"):
+                    voter_raw = st.text_area(
+                        "Paste voter names",
+                        placeholder="Alex Johnson\nSam Rivera\nJordan Lee",
+                        height=140,
+                        help="Enter one person per line. The app will generate one private voting link per name.",
+                    )
+                    submitted = st.form_submit_button("Generate Voting Links")
+                if submitted:
+                    voter_labels = parse_voter_labels(voter_raw)
+                    if not voter_labels:
+                        st.warning("Add at least one voter name.")
+                    else:
+                        try:
+                            db.add_voters(election_id, voter_labels)
+                            st.success(f"Generated {len(voter_labels)} voting links.")
+                            st.rerun()
+                        except Exception:
+                            st.error("Could not add voter links. Check your database connection and try again.")
+
+            st.subheader("Voter Links")
+            render_link_table(voters)
+
+        with results_tab:
+            auto_refresh = st.toggle(
+                "Auto-refresh results every 10 seconds",
+                value=True,
+                help="Leave this on during the Zoom vote so the admin dashboard updates as ballots come in.",
+            )
+            if auto_refresh:
+                if st_autorefresh is not None:
+                    st_autorefresh(interval=10_000, key=f"admin-refresh-{election_id}")
+                    st.caption("Auto-refresh is on. Ballots and results update about every 10 seconds.")
                 else:
-                    try:
-                        db.add_voters(election_id, voter_labels)
-                        st.success(f"Generated {len(voter_labels)} voting links.")
-                        st.rerun()
-                    except Exception:
-                        st.error("Could not add voter links. Check your database connection and try again.")
+                    st.caption("Auto-refresh will turn on after Streamlit installs the latest requirements. Until then, refresh the page.")
+            render_results(election)
 
-        st.subheader("Voter Links")
-        render_link_table(voters)
-
-        st.divider()
-        render_results(election)
+        with audit_tab:
+            render_protocol_audit(election)
 
 
 def main() -> None:
