@@ -131,6 +131,71 @@ def inject_css() -> None:
         .rank-name {
             font-weight: 700;
         }
+        .results-summary {
+            display: grid;
+            grid-template-columns: minmax(260px, .9fr) minmax(320px, 1.1fr);
+            gap: 1rem;
+            margin: 1rem 0 1.25rem;
+        }
+        @media (max-width: 820px) {
+            .results-summary {
+                grid-template-columns: 1fr;
+            }
+        }
+        .summary-panel {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #ffffff;
+            padding: 1rem;
+            box-shadow: 0 8px 24px rgba(17, 24, 39, 0.04);
+        }
+        .summary-panel h3 {
+            font-size: 1rem;
+            margin: 0 0 .75rem;
+        }
+        .standing-row {
+            display: grid;
+            grid-template-columns: 2.2rem minmax(0, 1fr) auto;
+            align-items: center;
+            gap: .65rem;
+            padding: .65rem 0;
+            border-top: 1px solid #f0f2f5;
+        }
+        .standing-row:first-of-type {
+            border-top: 0;
+        }
+        .standing-rank {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.8rem;
+            height: 1.8rem;
+            border-radius: 999px;
+            background: #eef2ff;
+            color: var(--brand);
+            font-weight: 800;
+        }
+        .standing-name {
+            font-weight: 750;
+        }
+        .standing-status {
+            border-radius: 999px;
+            border: 1px solid #e5e7eb;
+            color: #374151;
+            font-size: .78rem;
+            font-weight: 750;
+            padding: .22rem .5rem;
+            white-space: nowrap;
+        }
+        .standing-status.elected {
+            background: #ecfdf5;
+            border-color: #a7f3d0;
+            color: #065f46;
+        }
+        .standing-status.eliminated {
+            background: #f9fafb;
+            color: #6b7280;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -307,6 +372,103 @@ def fetch_results(election_id: str, seats_available: int) -> dict:
     return tabulate_stv(rankings, candidate_map, seats_available)
 
 
+def result_standings(results: dict) -> list[dict]:
+    if not results.get("rounds"):
+        return []
+
+    latest_totals = {}
+    for round_data in results["rounds"]:
+        for row in round_data["totals"]:
+            latest_totals[row["candidate_id"]] = row
+
+    winners = results.get("winners", [])
+    winner_ids = {winner["candidate_id"] for winner in winners}
+
+    standings = []
+    for winner in winners:
+        latest = latest_totals.get(winner["candidate_id"], {})
+        standings.append(
+            {
+                "candidate": winner["candidate"],
+                "votes": latest.get("votes"),
+                "status": "elected",
+            }
+        )
+
+    remaining = [
+        row
+        for row in latest_totals.values()
+        if row["candidate_id"] not in winner_ids
+    ]
+    remaining.sort(
+        key=lambda row: (
+            0 if row["status"] == "continuing" else 1,
+            -float(row.get("votes", 0)),
+            row["candidate"].lower(),
+        )
+    )
+    standings.extend(
+        {
+            "candidate": row["candidate"],
+            "votes": row.get("votes"),
+            "status": row["status"],
+        }
+        for row in remaining
+    )
+    return standings
+
+
+def render_results_summary(results: dict, seats_available: int) -> None:
+    winners = results.get("winners", [])
+    standings = result_standings(results)
+
+    if not results["total_ballots"]:
+        st.info("No ballots have been cast yet. Elected candidates and rank order will appear here as votes come in.")
+        return
+
+    winner_rows = ""
+    if winners:
+        winner_rows = "".join(
+            f"""
+            <div class="standing-row">
+                <span class="standing-rank">{index}</span>
+                <span class="standing-name">{winner["candidate"]}</span>
+                <span class="standing-status elected">elected</span>
+            </div>
+            """
+            for index, winner in enumerate(winners, start=1)
+        )
+    else:
+        winner_rows = '<p class="muted">No candidate has reached the election threshold yet.</p>'
+
+    standing_rows = "".join(
+        f"""
+        <div class="standing-row">
+            <span class="standing-rank">{index}</span>
+            <span class="standing-name">{row["candidate"]}</span>
+            <span class="standing-status {row["status"]}">{row["status"]}</span>
+        </div>
+        """
+        for index, row in enumerate(standings, start=1)
+    )
+
+    st.markdown(
+        f"""
+        <div class="results-summary">
+            <div class="summary-panel">
+                <h3>Elected candidates ({len(winners)} of {seats_available})</h3>
+                {winner_rows}
+            </div>
+            <div class="summary-panel">
+                <h3>Current rank order</h3>
+                {standing_rows}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_results(election: dict) -> None:
     results = fetch_results(election["id"], election["seats_available"])
     st.subheader("Live RCV Results")
@@ -316,13 +478,7 @@ def render_results(election: dict) -> None:
     metric_cols[1].metric("Seats", election["seats_available"])
     metric_cols[2].metric("Droop Quota", results["quota"])
 
-    if results["winners"]:
-        winner_html = "".join(
-            f'<span class="winner-pill">{winner["candidate"]}</span>' for winner in results["winners"]
-        )
-        st.markdown(winner_html, unsafe_allow_html=True)
-    else:
-        st.info("No winners yet. Results will appear as ballots are cast.")
+    render_results_summary(results, election["seats_available"])
 
     rows = []
     for round_data in results["rounds"]:
@@ -545,6 +701,9 @@ def render_admin() -> None:
     create_tab, manage_tab = st.tabs(["Create Election", "Manage Election"])
 
     with create_tab:
+        st.info(
+            "Creating an election adds a new, separate election. Existing elections, voters, ballots, and results are kept."
+        )
         with st.form("create_election"):
             title = st.text_input("Election title", placeholder="2026 Board Election")
             seats = st.number_input("Seats available", min_value=1, max_value=50, value=1, step=1)
@@ -554,7 +713,7 @@ def render_admin() -> None:
                 height=180,
                 help="Enter one candidate per line. Optional bios can be added after a pipe character.",
             )
-            submitted = st.form_submit_button("Create Active Election")
+            submitted = st.form_submit_button("Create Separate Active Election")
 
         if submitted:
             candidates = parse_candidates(candidate_raw)
@@ -584,7 +743,12 @@ def render_admin() -> None:
                     default_index = index
                     break
 
-        selected_label = st.selectbox("Election", option_labels, index=default_index)
+        selected_label = st.selectbox(
+            "Election to manage",
+            option_labels,
+            index=default_index,
+            help="Each election is separate. Selecting one here does not overwrite the others.",
+        )
         election_id = election_options[selected_label]
         st.session_state["selected_election_id"] = election_id
 
