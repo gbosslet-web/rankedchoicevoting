@@ -182,8 +182,15 @@ def parse_emails(raw: str) -> list[str]:
 def candidate_sortable_styles() -> str:
     return """
     .sortable-component.vertical {
-        gap: 10px;
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(260px, .9fr);
+        gap: 12px;
         padding: 2px;
+    }
+    @media (max-width: 760px) {
+        .sortable-component.vertical {
+            grid-template-columns: 1fr;
+        }
     }
     .sortable-container {
         border: 1px solid #e5e7eb;
@@ -191,6 +198,7 @@ def candidate_sortable_styles() -> str:
         background: #f9fafb;
         padding: 12px;
         margin-bottom: 14px;
+        min-height: 160px;
     }
     .sortable-container-header {
         color: #111827;
@@ -202,6 +210,7 @@ def candidate_sortable_styles() -> str:
         display: flex;
         flex-direction: column;
         gap: 10px;
+        min-height: 96px;
     }
     .sortable-item {
         position: relative;
@@ -236,6 +245,18 @@ def candidate_sortable_styles() -> str:
         cursor: grabbing;
     }
     """
+
+
+def render_unranked_helper() -> None:
+    st.markdown(
+        """
+        <div class="callout">
+            <strong>Leaving someone unranked:</strong> drag their placard into the <strong>Not ranked</strong>
+            box, or use the checkboxes below.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def unique_candidate_labels(candidates: list[dict]) -> tuple[list[str], dict[str, str]]:
@@ -411,6 +432,7 @@ def render_voter(token: str) -> None:
         st.caption(
             "Top placard in Ranked choices is your first choice. Drag candidates you do not want to rank into Not ranked."
         )
+        render_unranked_helper()
         sorted_groups = sort_items(
             [
                 {"header": "Ranked choices", "items": labels},
@@ -424,6 +446,14 @@ def render_voter(token: str) -> None:
         grouped_items = {group["header"]: group["items"] for group in sorted_groups}
         selected = grouped_items.get("Ranked choices", [])
         unranked = grouped_items.get("Not ranked", [])
+        checkbox_unranked = st.multiselect(
+            "Optional: also leave these candidates unranked",
+            options=selected,
+            help="Use this if the Not ranked drag box is hard to use on your screen.",
+        )
+        if checkbox_unranked:
+            selected = [label for label in selected if label not in checkbox_unranked]
+            unranked = unranked + [label for label in checkbox_unranked if label not in unranked]
         if unranked:
             st.caption(f"Not ranked: {', '.join(unranked)}")
     else:
