@@ -7,6 +7,10 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    st_autorefresh = None
+try:
     from streamlit_sortables import sort_items
 except ImportError:
     sort_items = None
@@ -424,51 +428,50 @@ def render_results_summary(results: dict, seats_available: int) -> None:
     winners = results.get("winners", [])
     standings = result_standings(results)
 
+    st.markdown("### Election Snapshot")
+
     if not results["total_ballots"]:
         st.info("No ballots have been cast yet. Elected candidates and rank order will appear here as votes come in.")
         return
 
-    winner_rows = ""
-    if winners:
-        winner_rows = "".join(
-            f"""
-            <div class="standing-row">
-                <span class="standing-rank">{index}</span>
-                <span class="standing-name">{winner["candidate"]}</span>
-                <span class="standing-status elected">elected</span>
-            </div>
-            """
-            for index, winner in enumerate(winners, start=1)
+    winner_column, standing_column = st.columns([0.9, 1.1])
+    with winner_column:
+        st.markdown(f"#### Elected candidates ({len(winners)} of {seats_available})")
+        if winners:
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Seat": index,
+                            "Candidate": winner["candidate"],
+                            "Status": "Elected",
+                        }
+                        for index, winner in enumerate(winners, start=1)
+                    ]
+                ),
+                hide_index=True,
+                use_container_width=True,
+            )
+        else:
+            st.info("No candidate has reached the election threshold yet.")
+
+    with standing_column:
+        st.markdown("#### Current rank order")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Rank": index,
+                        "Candidate": row["candidate"],
+                        "Latest votes": row.get("votes", ""),
+                        "Status": row["status"].title(),
+                    }
+                    for index, row in enumerate(standings, start=1)
+                ]
+            ),
+            hide_index=True,
+            use_container_width=True,
         )
-    else:
-        winner_rows = '<p class="muted">No candidate has reached the election threshold yet.</p>'
-
-    standing_rows = "".join(
-        f"""
-        <div class="standing-row">
-            <span class="standing-rank">{index}</span>
-            <span class="standing-name">{row["candidate"]}</span>
-            <span class="standing-status {row["status"]}">{row["status"]}</span>
-        </div>
-        """
-        for index, row in enumerate(standings, start=1)
-    )
-
-    st.markdown(
-        f"""
-        <div class="results-summary">
-            <div class="summary-panel">
-                <h3>Elected candidates ({len(winners)} of {seats_available})</h3>
-                {winner_rows}
-            </div>
-            <div class="summary-panel">
-                <h3>Current rank order</h3>
-                {standing_rows}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def render_results(election: dict) -> None:
@@ -806,6 +809,18 @@ def render_admin() -> None:
         if new_status != election["status"]:
             db.update_election_status(election_id, new_status)
             st.rerun()
+
+        auto_refresh = st.toggle(
+            "Auto-refresh results every 10 seconds",
+            value=True,
+            help="Leave this on during the Zoom vote so the admin dashboard updates as ballots come in.",
+        )
+        if auto_refresh:
+            if st_autorefresh is not None:
+                st_autorefresh(interval=10_000, key=f"admin-refresh-{election_id}")
+                st.caption("Auto-refresh is on. Ballots and results update about every 10 seconds.")
+            else:
+                st.caption("Auto-refresh will turn on after Streamlit installs the latest requirements. Until then, refresh the page.")
 
         with st.expander("Add voters", expanded=not voters):
             with st.form("add_voters"):
