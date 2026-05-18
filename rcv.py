@@ -143,42 +143,42 @@ def tabulate_stv(
             )
             break
 
-        newly_elected = [
-            candidate_id
-            for candidate_id, votes in sorted(totals.items(), key=lambda item: (-item[1], candidates[item[0]].lower()))
-            if votes + EPSILON >= quota and candidate_id not in elected
-        ]
+        newly_elected = sorted(
+            [
+                candidate_id
+                for candidate_id, votes in totals.items()
+                if votes + EPSILON >= quota and candidate_id not in elected
+            ],
+            key=lambda candidate_id: (-totals[candidate_id], candidates[candidate_id].lower()),
+        )
 
         if newly_elected:
-            for candidate_id in newly_elected:
-                if len(elected) >= seats:
-                    break
+            candidate_id = newly_elected[0]
+            total_votes = totals.get(candidate_id, 0.0)
+            elected.append(candidate_id)
+            active.discard(candidate_id)
 
-                total_votes = totals.get(candidate_id, 0.0)
-                elected.append(candidate_id)
-                active.discard(candidate_id)
+            surplus = max(0.0, total_votes - quota)
+            transfer_value = surplus / total_votes if total_votes > EPSILON else 0.0
+            for ballot_index in assignments.get(candidate_id, []):
+                ballots[ballot_index].weight *= transfer_value
 
-                surplus = max(0.0, total_votes - quota)
-                transfer_value = surplus / total_votes if total_votes > EPSILON else 0.0
-                for ballot_index in assignments.get(candidate_id, []):
-                    ballots[ballot_index].weight *= transfer_value
-
-                action = (
-                    f"{_candidate_name(candidate_id, candidates)} elected with "
-                    f"{total_votes:.2f} votes. Surplus transfer value: {transfer_value:.4f}."
+            action = (
+                f"{_candidate_name(candidate_id, candidates)} elected with "
+                f"{total_votes:.2f} votes. Surplus transfer value: {transfer_value:.4f}."
+            )
+            rounds.append(
+                _round_snapshot(
+                    round_number,
+                    totals,
+                    candidates,
+                    action,
+                    deepcopy(elected),
+                    deepcopy(eliminated),
+                    set(active),
                 )
-                rounds.append(
-                    _round_snapshot(
-                        round_number,
-                        totals,
-                        candidates,
-                        action,
-                        deepcopy(elected),
-                        deepcopy(eliminated),
-                        set(active),
-                    )
-                )
-                round_number += 1
+            )
+            round_number += 1
             continue
 
         lowest_candidate = min(totals, key=lambda cid: (totals[cid], candidates[cid].lower()))

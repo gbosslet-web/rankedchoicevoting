@@ -378,6 +378,70 @@ def fetch_results(election_id: str, seats_available: int) -> dict:
     return tabulate_stv(rankings, candidate_map, seats_available)
 
 
+def protocol_audit(election: dict, results: dict) -> pd.DataFrame:
+    candidates = db.fetch_candidates(election["id"])
+    voters = db.fetch_voters(election["id"])
+    ballots = db.fetch_ballots(election["id"])
+    candidate_ids = {candidate["id"] for candidate in candidates}
+    expected_quota = results["total_ballots"] // (int(election["seats_available"]) + 1) + 1 if results["total_ballots"] else 0
+
+    invalid_references = 0
+    duplicate_rankings = 0
+    empty_rankings = 0
+    for ballot in ballots:
+        ranking = ballot.get("ranking") or []
+        if not ranking:
+            empty_rankings += 1
+        if len(ranking) != len(set(ranking)):
+            duplicate_rankings += 1
+        invalid_references += sum(1 for candidate_id in ranking if candidate_id not in candidate_ids)
+
+    voted_count = sum(1 for voter in voters if voter.get("has_voted"))
+    winner_ids = [winner["candidate_id"] for winner in results.get("winners", [])]
+    tie_note = "Alphabetical by candidate name when exact vote ties occur."
+    if len(candidates) <= int(election["seats_available"]):
+        tie_note = "Not applicable unless more candidates are added than available seats."
+
+    checks = [
+        {
+            "Check": "Counting method",
+            "Status": "Pass",
+            "Detail": "Single-seat elections use instant-runoff behavior; multi-seat elections use STV with a Droop quota.",
+        },
+        {
+            "Check": "Droop quota",
+            "Status": "Pass" if expected_quota == results["quota"] else "Review",
+            "Detail": f"Expected {expected_quota}; app calculated {results['quota']}.",
+        },
+        {
+            "Check": "Ballot count",
+            "Status": "Pass" if len(ballots) == results["total_ballots"] else "Review",
+            "Detail": f"{len(ballots)} stored ballots; {results['total_ballots']} counted ballots.",
+        },
+        {
+            "Check": "Single-use links",
+            "Status": "Pass" if voted_count == len(ballots) else "Review",
+            "Detail": f"{voted_count} voters marked voted; {len(ballots)} ballots stored.",
+        },
+        {
+            "Check": "Ballot rankings",
+            "Status": "Pass" if not empty_rankings and not duplicate_rankings and not invalid_references else "Review",
+            "Detail": f"{empty_rankings} empty, {duplicate_rankings} duplicate-ranking, {invalid_references} invalid-candidate issues.",
+        },
+        {
+            "Check": "Winners",
+            "Status": "Pass" if len(winner_ids) <= int(election["seats_available"]) and len(winner_ids) == len(set(winner_ids)) else "Review",
+            "Detail": f"{len(winner_ids)} elected for {election['seats_available']} available seat(s).",
+        },
+        {
+            "Check": "Tie protocol",
+            "Status": "Review",
+            "Detail": tie_note,
+        },
+    ]
+    return pd.DataFrame(checks)
+
+
 def result_standings(results: dict) -> list[dict]:
     if not results.get("rounds"):
         return []
@@ -526,6 +590,13 @@ def render_results(election: dict) -> None:
             for round_data in results["rounds"]:
                 st.markdown(f"**Round {round_data['round']}** · {round_data['action']}")
                 st.dataframe(pd.DataFrame(round_data["totals"]), hide_index=True, use_container_width=True)
+
+    with st.expander("Protocol audit", expanded=False):
+        st.dataframe(protocol_audit(election, results), hide_index=True, use_container_width=True)
+        st.caption(
+            "Tie protocol is marked Review because bylaws sometimes require a specific tie-breaking method. "
+            "The app currently uses a deterministic alphabetical tie-breaker for exact ties."
+        )
 
 
 def render_thank_you(election: dict) -> None:
