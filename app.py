@@ -6,6 +6,10 @@ from urllib.parse import quote
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+try:
+    from streamlit_sortables import sort_items
+except ImportError:
+    sort_items = None
 
 import db
 from rcv import tabulate_stv
@@ -102,6 +106,31 @@ def inject_css() -> None:
             border: 1px solid #a7f3d0;
             font-weight: 700;
         }
+        .rank-preview {
+            display: flex;
+            align-items: center;
+            gap: .65rem;
+            padding: .75rem .9rem;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #ffffff;
+            margin-bottom: .5rem;
+        }
+        .rank-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            border-radius: 999px;
+            background: #eef2ff;
+            color: var(--brand);
+            font-weight: 800;
+            flex: 0 0 auto;
+        }
+        .rank-name {
+            font-weight: 700;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -148,6 +177,73 @@ def parse_emails(raw: str) -> list[str]:
             emails.append(email)
             seen.add(email)
     return emails
+
+
+def candidate_sortable_styles() -> str:
+    return """
+    .sortable-component.vertical {
+        gap: 10px;
+        padding: 2px;
+    }
+    .sortable-container {
+        border: 0;
+        background: transparent;
+        padding: 0;
+    }
+    .sortable-container-header {
+        display: none;
+    }
+    .sortable-container-body {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .sortable-item {
+        position: relative;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 8px 22px rgba(17, 24, 39, 0.06);
+        color: #111827;
+        cursor: grab;
+        font-size: 17px;
+        font-weight: 700;
+        min-height: 58px;
+        padding: 16px 18px 16px 52px;
+        transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+    }
+    .sortable-item::before {
+        content: "⋮⋮";
+        position: absolute;
+        left: 18px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #9ca3af;
+        font-weight: 900;
+        letter-spacing: -2px;
+    }
+    .sortable-item:hover {
+        border-color: #c7d2fe;
+        box-shadow: 0 12px 28px rgba(79, 70, 229, 0.12);
+        transform: translateY(-1px);
+    }
+    .sortable-item:active {
+        cursor: grabbing;
+    }
+    """
+
+
+def unique_candidate_labels(candidates: list[dict]) -> tuple[list[str], dict[str, str]]:
+    seen: dict[str, int] = {}
+    labels = []
+    label_to_id = {}
+    for candidate in candidates:
+        name = candidate["name"]
+        seen[name] = seen.get(name, 0) + 1
+        label = name if seen[name] == 1 else f"{name} ({seen[name]})"
+        labels.append(label)
+        label_to_id[label] = candidate["id"]
+    return labels, label_to_id
 
 
 def friendly_db_error() -> None:
@@ -303,19 +399,49 @@ def render_voter(token: str) -> None:
         st.info("No candidates are available for this election yet.")
         return
 
-    candidate_names = {candidate["name"]: candidate["id"] for candidate in candidates}
-    available_names = list(candidate_names.keys())
-    selected: list[str] = []
+    labels, label_to_id = unique_candidate_labels(candidates)
 
-    with st.form("ballot_form"):
+    if sort_items is not None:
+        st.markdown("#### Drag candidates into your preferred order")
+        st.caption("Top placard is your first choice. Drag a placard up or down to change the ranking.")
+        sorted_labels = sort_items(
+            labels,
+            direction="vertical",
+            custom_style=candidate_sortable_styles(),
+            key=f"candidate-sort-{election['id']}-{voter['id']}",
+        )
+        ranked_count = st.slider(
+            "How many choices should be counted?",
+            min_value=1,
+            max_value=len(sorted_labels),
+            value=len(sorted_labels),
+            help="Leave this at all candidates unless you only want to rank your top few choices.",
+        )
+        selected = sorted_labels[:ranked_count]
+    else:
+        st.warning("Drag-and-drop ranking is not available, so this ballot is using the fallback ranking controls.")
+        available_names = list(label_to_id.keys())
+        selected: list[str] = []
         for rank in range(1, len(candidates) + 1):
             choices = ["No selection"] + [name for name in available_names if name not in selected]
             choice = st.selectbox(f"Rank {rank}", choices, key=f"rank_{rank}")
             if choice != "No selection":
                 selected.append(choice)
 
-        confirm = st.checkbox("I confirm this ranking is final and my link will be marked as used.")
-        submitted = st.form_submit_button("Submit Ballot", type="primary")
+    st.markdown("#### Your ballot")
+    for index, label in enumerate(selected, start=1):
+        st.markdown(
+            f"""
+            <div class="rank-preview">
+                <span class="rank-number">{index}</span>
+                <span class="rank-name">{label}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    confirm = st.checkbox("I confirm this ranking is final and my link will be marked as used.")
+    submitted = st.button("Submit Ballot", type="primary")
 
     if submitted:
         if not selected:
@@ -325,7 +451,7 @@ def render_voter(token: str) -> None:
             st.warning("Please confirm your ballot before submitting.")
             return
 
-        ranking = [candidate_names[name] for name in selected]
+        ranking = [label_to_id[name] for name in selected]
         try:
             db.submit_ballot(voter["id"], election["id"], ranking)
             st.session_state["submitted_token"] = token
