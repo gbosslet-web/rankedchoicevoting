@@ -250,6 +250,13 @@ def parse_voter_labels(raw: str) -> list[str]:
     return labels
 
 
+def election_option_label(election: dict) -> str:
+    created_at = str(election.get("created_at", ""))
+    created_label = created_at[:10] if created_at else "unknown date"
+    short_id = str(election["id"])[:8]
+    return f"{election['title']} | {election['status']} | {created_label} | {short_id}"
+
+
 def candidate_sortable_styles() -> str:
     return """
     .sortable-component.vertical {
@@ -920,23 +927,20 @@ def render_admin() -> None:
             st.info("Create an election to begin.")
             return
 
-        election_options = {f"{row['title']} ({row['status']})": row["id"] for row in elections}
+        election_by_id = {row["id"]: row for row in elections}
         default_id = st.session_state.get("selected_election_id")
-        option_labels = list(election_options.keys())
+        election_ids = list(election_by_id.keys())
         default_index = 0
-        if default_id:
-            for index, label in enumerate(option_labels):
-                if election_options[label] == default_id:
-                    default_index = index
-                    break
+        if default_id in election_by_id:
+            default_index = election_ids.index(default_id)
 
-        selected_label = st.selectbox(
+        election_id = st.selectbox(
             "Election to manage",
-            option_labels,
+            election_ids,
             index=default_index,
+            format_func=lambda election_id: election_option_label(election_by_id[election_id]),
             help="Each election is separate. Selecting one here does not overwrite the others.",
         )
-        election_id = election_options[selected_label]
         st.session_state["selected_election_id"] = election_id
 
         try:
@@ -949,6 +953,10 @@ def render_admin() -> None:
         if not election:
             st.error("Election not found.")
             return
+
+        st.caption(
+            f"Selected election: `{election['title']}` · ID `{election['id']}` · created `{election.get('created_at', 'unknown')}`"
+        )
 
         cols = st.columns(4)
         cols[0].metric("Status", election["status"].title())
